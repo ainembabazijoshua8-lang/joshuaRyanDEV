@@ -15,64 +15,78 @@ interface EditorModalProps {
 const EditorModal: React.FC<EditorModalProps> = ({ file, onClose, setFiles }) => {
     const quillRef = useRef<any>(null);
     const pdfDocRef = useRef<any>(null);
-    const [editorContent, setEditorContent] = useState(file.content || '');
-    const [pdfState, setPdfState] = useState({ currentPage: 1, totalPages: 0, error: '' });
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
-    const renderPdfPage = useCallback((pageNum: number, pdfDoc: any) => {
-        if (!canvasRef.current) return;
-        pdfDoc.getPage(pageNum).then((page: any) => {
+    const [editorContent, setEditorContent] = useState(file.content || '');
+    const [pdfState, setPdfState] = useState({ currentPage: 1, totalPages: 0, error: '', isLoading: true });
+
+    const renderPdfPage = useCallback(async (pageNum: number, pdfDoc: any, signal: { aborted: boolean }) => {
+        try {
+            const page = await pdfDoc.getPage(pageNum);
+            if (signal.aborted || !canvasRef.current) return;
+
             const viewport = page.getViewport({ scale: 1.5 });
-            const canvas = canvasRef.current!;
+            const canvas = canvasRef.current;
             const context = canvas.getContext('2d');
-            canvas.height = viewport.height;
-            canvas.width = viewport.width;
-            page.render({ canvasContext: context, viewport: viewport });
-            setPdfState(s => ({ ...s, currentPage: pageNum, error: '' }));
-        }).catch((err: Error) => {
+
+            if (context) {
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                await page.render({ canvasContext: context, viewport: viewport }).promise;
+            }
+            
+            if (signal.aborted) return;
+            setPdfState(s => ({ ...s, currentPage: pageNum }));
+
+        } catch (err) {
+            if (signal.aborted) return;
             console.error("Error rendering PDF page:", err);
-            setPdfState(s => ({ ...s, error: 'Failed to render page.' }));
-        });
+            setPdfState(s => ({ ...s, error: 'Failed to render page.', isLoading: false }));
+        }
     }, []);
 
     useEffect(() => {
-        let isMounted = true;
+        const abortController = { aborted: false };
+        let quillHandler: (() => void) | null = null;
+        let quillInstance: any = null;
 
         if (isPdf(file.name) && file.url) {
+            setPdfState({ currentPage: 1, totalPages: 0, error: '', isLoading: true });
             pdfjsLib.GlobalWorkerOptions.workerSrc = `https://mozilla.github.io/pdf.js/build/pdf.worker.js`;
+            
             pdfjsLib.getDocument(file.url).promise.then((pdf: any) => {
-                if (!isMounted) return;
+                if (abortController.aborted) return;
                 pdfDocRef.current = pdf;
-                setPdfState({ currentPage: 1, totalPages: pdf.numPages, error: '' });
-                renderPdfPage(1, pdf);
+                setPdfState(s => ({ ...s, totalPages: pdf.numPages, isLoading: false }));
+                renderPdfPage(1, pdf, abortController);
             }).catch((err: Error) => {
-                if (!isMounted) return;
+                if (abortController.aborted) return;
                 console.error("Error loading PDF:", err);
-                setPdfState(s => ({ ...s, error: 'Failed to load PDF file.' }));
+                setPdfState(s => ({ ...s, error: 'Failed to load PDF file.', isLoading: false }));
             });
+
         } else if (isEditable(file.name)) {
             const editorElement = document.getElementById('quill-editor');
-            if (editorElement && !quillRef.current) {
-                 quillRef.current = new Quill(editorElement, { theme: 'snow' });
-                 quillRef.current.root.innerHTML = file.content || '';
+            if (editorElement) {
+                quillInstance = new Quill(editorElement, { theme: 'snow' });
+                quillRef.current = quillInstance;
+                quillInstance.root.innerHTML = file.content || '';
                  
-                 const handler = () => {
-                     if (quillRef.current) {
-                        setEditorContent(quillRef.current.root.innerHTML);
+                quillHandler = () => {
+                     if (quillInstance) {
+                        setEditorContent(quillInstance.root.innerHTML);
                      }
-                 };
-                 quillRef.current.on('text-change', handler);
-
-                 return () => {
-                    if (quillRef.current) {
-                        quillRef.current.off('text-change', handler);
-                    }
-                 }
+                };
+                quillInstance.on('text-change', quillHandler);
             }
         }
         
         return () => {
-            isMounted = false;
+            abortController.aborted = true;
+            if (quillInstance && quillHandler) {
+                quillInstance.off('text-change', quillHandler);
+            }
+            quillRef.current = null;
         };
     }, [file, renderPdfPage]);
 
@@ -85,7 +99,8 @@ const EditorModal: React.FC<EditorModalProps> = ({ file, onClose, setFiles }) =>
         if (!pdfDocRef.current) return;
         const newPage = direction === 'next' ? pdfState.currentPage + 1 : pdfState.currentPage - 1;
         if (newPage > 0 && newPage <= pdfState.totalPages) {
-            renderPdfPage(newPage, pdfDocRef.current);
+            // Pass a new, non-aborted signal for the new render operation
+            renderPdfPage(newPage, pdfDocRef.current, { aborted: false });
         }
     };
 
@@ -111,22 +126,24 @@ const EditorModal: React.FC<EditorModalProps> = ({ file, onClose, setFiles }) =>
                     {isEditable(file.name) && <div id="quill-editor" className="h-full"></div>}
                     {isPdf(file.name) && (
                         <div className="h-full overflow-auto bg-gray-800 text-center p-4">
-                             {pdfState.error ? (
+                             {pdfState.isLoading && (
+                                <div className="flex items-center justify-center h-full text-white font-semibold">Loading PDF...</div>
+                             )}
+                             {pdfState.error && (
                                 <div className="flex items-center justify-center h-full">
                                     <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
                                         <strong className="font-bold">Error: </strong>
                                         <span className="block sm:inline">{pdfState.error}</span>
                                     </div>
                                 </div>
-                             ) : (
+                             )}
+                             {!pdfState.isLoading && !pdfState.error && pdfState.totalPages > 0 && (
                                 <>
-                                    {pdfState.totalPages > 0 && (
-                                        <div className="sticky top-0 z-10 inline-flex items-center gap-4 bg-gray-900/80 text-white rounded-lg px-4 py-2 mb-4">
-                                            <button onClick={() => handlePdfNav('prev')} disabled={pdfState.currentPage <= 1} className="disabled:opacity-50">Prev</button>
-                                            <span>{pdfState.currentPage} / {pdfState.totalPages}</span>
-                                            <button onClick={() => handlePdfNav('next')} disabled={pdfState.currentPage >= pdfState.totalPages} className="disabled:opacity-50">Next</button>
-                                        </div>
-                                    )}
+                                    <div className="sticky top-0 z-10 inline-flex items-center gap-4 bg-gray-900/80 text-white rounded-lg px-4 py-2 mb-4">
+                                        <button onClick={() => handlePdfNav('prev')} disabled={pdfState.currentPage <= 1} className="disabled:opacity-50">Prev</button>
+                                        <span>{pdfState.currentPage} / {pdfState.totalPages}</span>
+                                        <button onClick={() => handlePdfNav('next')} disabled={pdfState.currentPage >= pdfState.totalPages} className="disabled:opacity-50">Next</button>
+                                    </div>
                                     <canvas ref={canvasRef}></canvas>
                                 </>
                              )}
