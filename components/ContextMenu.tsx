@@ -9,7 +9,8 @@ interface ContextMenuProps {
     menu: ContextMenuState;
     onAction: (action: ContextAction) => void;
     selectedCount: number;
-    location: 'browser' | 'trash' | 'favorites';
+    // Fix: Added 'recents' to the location type to match the possible values from App state.
+    location: 'browser' | 'trash' | 'favorites' | 'recents';
     clipboard: ClipboardState | null;
 }
 

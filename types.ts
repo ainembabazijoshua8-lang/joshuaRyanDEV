@@ -7,6 +7,7 @@ export interface FileItem {
     name: string;
     type: 'file' | 'folder';
     lastModified: number;
+    lastOpened?: number; // Added for Recents feature
     size: number;
     parentId: number | null;
     isFavorite?: boolean;

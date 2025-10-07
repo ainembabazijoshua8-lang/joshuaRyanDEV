@@ -27,7 +27,7 @@ interface FileBrowserProps {
     setRenamingId: (id: number | null) => void;
     onRename: (fileId: number, newName: string) => void;
     onToggleFavorite: (id: number) => void;
-    location: 'browser' | 'trash' | 'favorites';
+    location: 'browser' | 'trash' | 'favorites' | 'recents';
     searchTerm: string;
     searchMode: SearchMode;
     aiSearchResults: AiSearchResult[];
@@ -81,7 +81,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({
     };
 
     const renderHeader = () => {
-        if (viewMode === 'grid' || location !== 'browser') return null;
+        if (viewMode === 'grid' || location === 'recents') return null;
         
         const renderSortArrow = (key: SortConfig['key']) => {
             if (sortConfig.key !== key) return null;
@@ -90,7 +90,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({
         
         const headers: { key: SortConfig['key'], label: string, span: string }[] = [
             { key: 'name', label: 'Name', span: 'col-span-7' },
-            { key: 'lastModified', label: 'Last Modified', span: 'col-span-3' },
+            { key: 'lastModified', label: location === 'trash' ? 'Date Trashed' : 'Last Modified', span: 'col-span-3' },
             { key: 'size', label: 'File Size', span: 'col-span-2' },
         ];
         
@@ -119,7 +119,11 @@ const FileBrowser: React.FC<FileBrowserProps> = ({
         } else if (location === 'trash') {
             message = "The trash is empty.";
             suggestion = "Deleted files will appear here.";
+        } else if (location === 'recents') {
+            message = "No recent files.";
+            suggestion = "Open or preview a file to have it show up here.";
         }
+
 
         return (
             <div className="text-center text-text-secondary py-20">

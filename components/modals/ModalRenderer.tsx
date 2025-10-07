@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { ModalState, FileItem } from '../../types';
 import UploadModal from './UploadModal';
@@ -23,9 +24,10 @@ const ModalRenderer: React.FC<ModalRendererProps> = ({
         return null;
     }
 
-    // Fix: Replaced the if-chain with a switch statement. This is a more robust and standard
-    // way to handle discriminated unions in TypeScript, ensuring correct type narrowing
-    // within each case block and fixing property access errors.
+    // Fix: Replaced an if-chain with a switch statement. Using a switch on the
+    // discriminant property ('type') of a discriminated union ('ModalState') allows
+    // TypeScript to correctly narrow the type of 'modal' within each case block,
+    // resolving errors about properties not existing on the union type.
     switch (modal.type) {
         case 'upload':
             return <UploadModal onClose={closeModal} setFiles={setFiles} currentFolderId={modal.currentFolderId} />;
@@ -57,6 +59,8 @@ const ModalRenderer: React.FC<ModalRendererProps> = ({
             return <SummaryModal file={modal.file} onClose={closeModal} />;
         
         default:
+            // This default case handles any unhandled modal types, ensuring type safety.
+            const _exhaustiveCheck: never = modal;
             return null;
     }
 };

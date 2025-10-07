@@ -1,8 +1,10 @@
+
 import React from 'react';
+import { ICONS } from '../constants';
 
 interface SidebarProps {
-    location: 'browser' | 'trash' | 'favorites';
-    setLocation: (location: 'browser' | 'trash' | 'favorites') => void;
+    location: 'browser' | 'trash' | 'favorites' | 'recents';
+    setLocation: (location: 'browser' | 'trash' | 'favorites' | 'recents') => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ location, setLocation }) => {
@@ -19,6 +21,12 @@ const Sidebar: React.FC<SidebarProps> = ({ location, setLocation }) => {
                         <a href="#" onClick={(e) => { e.preventDefault(); setLocation('browser'); }} className={`${linkBaseClasses} ${location === 'browser' ? activeClasses : inactiveClasses}`}>
                             <svg className="w-6 h-6 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
                             All Files
+                        </a>
+                    </li>
+                     <li className="mb-2">
+                        <a href="#" onClick={(e) => { e.preventDefault(); setLocation('recents'); }} className={`${linkBaseClasses} ${location === 'recents' ? activeClasses : inactiveClasses}`}>
+                           {ICONS.recents}
+                           Recents
                         </a>
                     </li>
                     <li className="mb-2">

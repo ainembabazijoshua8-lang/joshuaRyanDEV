@@ -26,7 +26,7 @@ function App() {
     const [searchMode, setSearchMode] = useState<SearchMode>('filename');
     const [isAiSearching, setIsAiSearching] = useState(false);
     const [aiSearchResults, setAiSearchResults] = useState<AiSearchResult[]>([]);
-    const [location, setLocation] = useState<'browser' | 'trash' | 'favorites'>('browser');
+    const [location, setLocation] = useState<'browser' | 'trash' | 'favorites' | 'recents'>('browser');
     const [renamingId, setRenamingId] = useState<number | null>(null);
     const [previewingFileId, setPreviewingFileId] = useState<number | null>(null);
     const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
@@ -69,6 +69,12 @@ function App() {
                 case 'favorites':
                     baseFiles = baseFiles.filter(f => !f.isTrashed && f.isFavorite);
                     break;
+                case 'recents':
+                     baseFiles = baseFiles
+                        .filter(f => !f.isTrashed && f.lastOpened)
+                        .sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0))
+                        .slice(0, 20);
+                    break;
             }
     
             if (searchTerm) {
@@ -100,6 +106,8 @@ function App() {
             setSearchTerm('');
             clearSelection();
         } else {
+            // Update lastOpened timestamp for Recents
+            setFiles(files.map(f => f.id === file.id ? { ...f, lastOpened: Date.now() } : f));
             const editorModal: ModalState = { type: 'view', file };
             setModal(editorModal);
         }
@@ -186,10 +194,17 @@ function App() {
     };
 
     const handleTogglePreview = () => {
+        let fileToPreviewId: number | null = null;
         if (previewingFileId) {
             setPreviewingFileId(null);
         } else if (selectedIds.size === 1) {
-            setPreviewingFileId(Array.from(selectedIds)[0]);
+            fileToPreviewId = Array.from(selectedIds)[0];
+            setPreviewingFileId(fileToPreviewId);
+        }
+
+        if (fileToPreviewId) {
+            // Update lastOpened timestamp for Recents
+            setFiles(files.map(f => f.id === fileToPreviewId ? { ...f, lastOpened: Date.now() } : f));
         }
     };
     
@@ -205,7 +220,7 @@ function App() {
         }
     };
     const handlePaste = () => {
-        if (!clipboard) return;
+        if (!clipboard || location !== 'browser') return;
 
         if (clipboard.action === 'cut') {
             // Move files
@@ -365,7 +380,7 @@ function App() {
                          const file = contextMenu.file;
                          switch(action) {
                             case 'open': if (file) handleOpen(file); break;
-                            case 'preview': if (file) setPreviewingFileId(file.id); break;
+                            case 'preview': if (file) { setPreviewingFileId(file.id); setFiles(fs => fs.map(f => f.id === file.id ? {...f, lastOpened: Date.now()} : f)) }; break;
                             case 'summarize': if (file) setModal({ type: 'summarize', file }); break;
                             case 'details': handleViewDetails(); break;
                             case 'rename': if (file) setRenamingId(file.id); break;

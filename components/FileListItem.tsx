@@ -19,7 +19,8 @@ interface FileListItemProps {
     onDrop: (e: React.DragEvent, targetFolderId: number | null) => void;
     selectedIds: Set<number>;
     onToggleFavorite: (id: number) => void;
-    location: 'browser' | 'trash' | 'favorites';
+    // Fix: Added 'recents' to the location type to match the possible values from parent components.
+    location: 'browser' | 'trash' | 'favorites' | 'recents';
     aiSnippet?: string;
     clipboard: ClipboardState | null;
 }

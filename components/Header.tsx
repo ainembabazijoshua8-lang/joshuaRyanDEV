@@ -1,5 +1,4 @@
 
-
 import React from 'react';
 import { ViewMode, SearchMode } from '../types';
 import { ICONS } from '../constants';
@@ -14,7 +13,7 @@ interface HeaderProps {
     searchMode: SearchMode;
     setSearchMode: (mode: SearchMode) => void;
     isAiSearching: boolean;
-    location: 'browser' | 'trash' | 'favorites';
+    location: 'browser' | 'trash' | 'favorites' | 'recents';
     onEmptyTrash: () => void;
     selectedIds: Set<number>;
     onDelete: () => void;
@@ -48,12 +47,14 @@ const Header: React.FC<HeaderProps> = ({
             case 'browser': return 'All Files';
             case 'trash': return 'Trash';
             case 'favorites': return 'Favorites';
+            case 'recents': return 'Recent Files';
         }
     }
 
     const getSearchPlaceholder = () => {
         if (location === 'favorites') return 'Search favorites...';
         if (location === 'trash') return 'Search trash...';
+        if (location === 'recents') return 'Search recent files...';
         if (searchMode === 'content') return 'Search file contents with AI...';
         return 'Search files...';
     }
@@ -67,10 +68,10 @@ const Header: React.FC<HeaderProps> = ({
             >
                 {previewingFileId ? 'Close Preview' : 'Preview'}
             </button>
-            <button onClick={onNewFolderClick} className="px-4 py-2 rounded-lg text-text-primary font-semibold border border-border-color hover:bg-gray-100">
+            <button onClick={onNewFolderClick} disabled={location !== 'browser'} className="px-4 py-2 rounded-lg text-text-primary font-semibold border border-border-color hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed">
                 New Folder
             </button>
-            <button onClick={onUploadClick} className="px-4 py-2 rounded-lg bg-primary text-white font-semibold hover:bg-blue-700">
+            <button onClick={onUploadClick} disabled={location !== 'browser'} className="px-4 py-2 rounded-lg bg-primary text-white font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
                 Upload
             </button>
         </>
@@ -95,8 +96,7 @@ const Header: React.FC<HeaderProps> = ({
             <div className="flex justify-between items-center">
                  <h2 className="text-xl font-semibold text-text-primary">{getHeaderTitle()}</h2>
                 <div className="flex items-center gap-4">
-                    {location === 'browser' && renderBrowserActions()}
-                    {location === 'trash' && renderTrashActions()}
+                    {location === 'trash' ? renderTrashActions() : renderBrowserActions()}
 
                     <div className="flex items-center border border-border-color rounded-lg">
                         <button
