@@ -1,0 +1,29 @@
+{
+  "name": "cloudflow-pro-ai",
+  "version": "1.0.0",
+  "description": "A modern file management web application with a secure backend for AI features.",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "install-dependencies": "npm install"
+  },
+  "keywords": [
+    "react",
+    "file-manager",
+    "gemini-api",
+    "express",
+    "nodejs"
+  ],
+  "author": "AI Studio",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^1.22.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "comments": {
+    "setup": "To run this project: 1. Create a '.env' file from '.env.example' and add your Gemini API key. 2. Run 'npm install' or 'npm run install-dependencies' in your terminal. 3. Run 'npm start' to launch the server. 4. Open http://localhost:3000 in your browser."
+  }
+}

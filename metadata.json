@@ -1,0 +1,5 @@
+{
+  "name": "CloudFlow Pro AI",
+  "description": "A modern file management web application that allows users to upload, view, edit, and organize files and folders. It features dual grid/list views, context menus, drag-and-drop uploads, and AI-powered document summarization using the Gemini API.",
+  "requestFramePermissions": []
+}
