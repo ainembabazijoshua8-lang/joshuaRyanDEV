@@ -19,8 +19,9 @@ export const summarizeContent = async (content: string): Promise<string> => {
     } catch (error) {
         console.error("Error calling local summarization API:", error);
         if (error instanceof Error) {
-            return `An error occurred while generating the summary: ${error.message}`;
+            // Re-throw the error so it can be caught and handled by the UI component
+            throw error;
         }
-        return "An unknown error occurred while contacting the summarization service.";
+        throw new Error("An unknown error occurred while contacting the summarization service.");
     }
 };

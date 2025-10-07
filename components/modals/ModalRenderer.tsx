@@ -25,7 +25,14 @@ const ModalRenderer: React.FC<ModalRendererProps> = ({ modal, setModal, files, s
         closeModal();
     };
     
-    // FIX: Use a single switch statement for type narrowing to resolve TypeScript errors.
+    // Add a guard to handle the `null` modal type explicitly.
+    // This helps TypeScript's control flow analysis correctly narrow the `modal` type
+    // within the subsequent switch statement, resolving property access errors.
+    if (!modal.type) {
+        return null;
+    }
+
+    // Use a single switch statement for type narrowing.
     // This ensures that properties like `modal.count` or `modal.file` are only accessed
     // when the modal type is correctly identified. The `null` case is handled explicitly.
     switch (modal.type) {
@@ -41,8 +48,6 @@ const ModalRenderer: React.FC<ModalRendererProps> = ({ modal, setModal, files, s
             return <DetailsModal file={modal.file} onClose={closeModal} />;
         case 'summarize':
             return <SummaryModal file={modal.file} onClose={closeModal} />;
-        case null:
-            return null;
         default:
             return null;
     }
