@@ -13,11 +13,23 @@ export const useFiles = (initialFiles: FileItem[]) => {
         }
     });
 
-    const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'name', direction: 'asc' });
+    const [sortConfig, setSortConfig] = useState<SortConfig>(() => {
+        try {
+            const localConfig = localStorage.getItem('cloudSortConfigV1');
+            return localConfig ? JSON.parse(localConfig) : { key: 'name', direction: 'asc' };
+        } catch (error) {
+            console.error("Failed to parse sort config from localStorage", error);
+            return { key: 'name', direction: 'asc' };
+        }
+    });
 
     useEffect(() => {
         localStorage.setItem('cloudFilesV5', JSON.stringify(files));
     }, [files]);
+
+    useEffect(() => {
+        localStorage.setItem('cloudSortConfigV1', JSON.stringify(sortConfig));
+    }, [sortConfig]);
     
     const sortedFiles = useMemo(() => {
         const sortableFiles = [...files];

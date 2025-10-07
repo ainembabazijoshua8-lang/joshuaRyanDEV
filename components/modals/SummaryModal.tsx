@@ -15,13 +15,15 @@ const SummaryModal: React.FC<SummaryModalProps> = ({ file, onClose }) => {
 
     useEffect(() => {
         const generateSummary = async () => {
-            if (!file.content) {
+            const latestContent = (file.versions && file.versions.length > 0) ? file.versions[0].content : null;
+
+            if (!latestContent) {
                 setError('File has no content to summarize.');
                 setIsLoading(false);
                 return;
             }
             try {
-                const result = await summarizeContent(file.content);
+                const result = await summarizeContent(latestContent);
                 setSummary(result);
             } catch (err) {
                 setError(err instanceof Error ? err.message : 'An unknown error occurred.');
@@ -31,7 +33,7 @@ const SummaryModal: React.FC<SummaryModalProps> = ({ file, onClose }) => {
         };
 
         generateSummary();
-    }, [file.content]);
+    }, [file]);
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center" onClick={onClose}>

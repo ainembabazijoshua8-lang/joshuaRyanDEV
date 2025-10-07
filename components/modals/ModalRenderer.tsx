@@ -12,38 +12,50 @@ interface ModalRendererProps {
     setModal: (modal: ModalState) => void;
     files: FileItem[];
     setFiles: React.Dispatch<React.SetStateAction<FileItem[]>>;
-    selectedIds: Set<number>;
-    clearSelection: () => void;
 }
 
-const ModalRenderer: React.FC<ModalRendererProps> = ({ modal, setModal, files, setFiles, selectedIds, clearSelection }) => {
+const ModalRenderer: React.FC<ModalRendererProps> = ({ 
+    modal, setModal, files, setFiles
+}) => {
     const closeModal = () => setModal({ type: null });
 
-    const handleConfirmDelete = () => {
-        setFiles(prev => prev.filter(f => !selectedIds.has(f.id)));
-        clearSelection();
-        closeModal();
-    };
-    
-    // Fix: Refactor to use a single switch statement for type narrowing.
-    // This ensures that properties like `modal.count` or `modal.file` are only accessed
-    // when the modal type is correctly identified by TypeScript's control flow analysis.
-    // The `null` case is now handled explicitly within the switch.
+    if (modal.type === null) {
+        return null;
+    }
+
+    // Fix: Replaced the if-chain with a switch statement. This is a more robust and standard
+    // way to handle discriminated unions in TypeScript, ensuring correct type narrowing
+    // within each case block and fixing property access errors.
     switch (modal.type) {
         case 'upload':
-            return <UploadModal onClose={closeModal} setFiles={setFiles} />;
+            return <UploadModal onClose={closeModal} setFiles={setFiles} currentFolderId={modal.currentFolderId} />;
+        
         case 'new-folder':
-            return <NewFolderModal onClose={closeModal} setFiles={setFiles} />;
-        case 'confirm-delete':
-            return <ConfirmDeleteModal onClose={closeModal} onConfirm={handleConfirmDelete} count={modal.count} />;
+            return <NewFolderModal onClose={closeModal} setFiles={setFiles} currentFolderId={modal.currentFolderId} />;
+
+        case 'confirm-delete': {
+            const { onConfirm, count, isPermanent, isEmptyingAll } = modal;
+            return <ConfirmDeleteModal 
+                onClose={closeModal} 
+                onConfirm={() => {
+                    onConfirm();
+                    closeModal();
+                }} 
+                count={count}
+                isPermanent={isPermanent}
+                isEmptyingAll={isEmptyingAll}
+            />;
+        }
+
         case 'view':
             return <EditorModal file={modal.file} onClose={closeModal} setFiles={setFiles} />;
+
         case 'details':
-            return <DetailsModal file={modal.file} onClose={closeModal} />;
+            return <DetailsModal files={modal.files} onClose={closeModal} />;
+
         case 'summarize':
             return <SummaryModal file={modal.file} onClose={closeModal} />;
-        case null:
-            return null;
+        
         default:
             return null;
     }

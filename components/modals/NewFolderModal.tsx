@@ -1,24 +1,26 @@
-
 import React, { useState } from 'react';
 import { FileItem } from '../../types';
+import { generateUniqueId } from '../../utils/fileUtils';
 
 interface NewFolderModalProps {
     onClose: () => void;
     setFiles: React.Dispatch<React.SetStateAction<FileItem[]>>;
+    currentFolderId: number | null;
 }
 
-const NewFolderModal: React.FC<NewFolderModalProps> = ({ onClose, setFiles }) => {
+const NewFolderModal: React.FC<NewFolderModalProps> = ({ onClose, setFiles, currentFolderId }) => {
     const [folderName, setFolderName] = useState('');
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (folderName.trim()) {
             const newFolder: FileItem = {
-                id: Date.now(),
+                id: generateUniqueId(),
                 name: folderName.trim(),
                 type: 'folder',
                 lastModified: Date.now(),
                 size: 0,
+                parentId: currentFolderId,
             };
             setFiles(prev => [newFolder, ...prev]);
             onClose();
@@ -27,7 +29,7 @@ const NewFolderModal: React.FC<NewFolderModalProps> = ({ onClose, setFiles }) =>
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center" onClick={onClose}>
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-sm p-6 modal-content" onClick={e => e.stopPropagation()}>
                 <h3 className="text-xl font-semibold mb-4">New Folder</h3>
                 <form onSubmit={handleSubmit}>
                     <input
