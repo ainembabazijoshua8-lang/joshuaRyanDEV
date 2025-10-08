@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { FileItem } from '../types';
+import { FileItem } from '../types.ts';
 
 export const useFileSelection = (sortedFiles: FileItem[]) => {
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());

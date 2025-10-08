@@ -1,192 +1,200 @@
-
-import React, { useRef, useMemo } from 'react';
-import { FileItem, ViewMode, SortConfig, AiSearchResult, SearchMode, ClipboardState } from '../types';
-import FileGridItem from './FileGridItem';
-import FileListItem from './FileListItem';
-import Breadcrumbs from './Breadcrumbs';
-import { useMarqueeSelection } from '../hooks/useMarqueeSelection';
-import { isDroppingInChild } from '../utils/fileUtils';
-import { ICONS } from '../constants';
+import React, { useRef, useMemo, useCallback } from 'react';
+import { FileItem, ViewMode, SortConfig, SortableField, Location, ContextAction, ClipboardState, AiSearchResult } from '../types.ts';
+import FileGridItem from './FileGridItem.tsx';
+import FileListItem from './FileListItem.tsx';
+import { ICONS } from '../constants.tsx';
+import ContextMenu, { useContextMenu } from './ContextMenu.tsx';
+import { useMarqueeSelection } from '../hooks/useMarqueeSelection.ts';
+import Breadcrumbs from './Breadcrumbs.tsx';
 
 interface FileBrowserProps {
     files: FileItem[];
     allFiles: FileItem[];
+    currentFolderId: number | null;
+    location: Location;
     viewMode: ViewMode;
+    selectedIds: Set<number>;
+    editingId: number | null;
+    sortConfig: SortConfig;
     onItemClick: (e: React.MouseEvent, fileId: number) => void;
     onItemDoubleClick: (file: FileItem) => void;
-    onContextMenu: (e: React.MouseEvent, file: FileItem | null) => void;
-    selectedIds: Set<number>;
-    setSelectedIds: (ids: Set<number>) => void;
-    clearSelection: () => void;
-    onNavigate: (folderId: number | null) => void;
-    currentFolderId: number | null;
-    sortConfig: SortConfig;
-    setSortConfig: (config: SortConfig) => void;
-    onMoveFiles: (draggedIds: Set<number>, targetFolderId: number | null) => void;
-    renamingId: number | null;
-    setRenamingId: (id: number | null) => void;
     onRename: (fileId: number, newName: string) => void;
-    onToggleFavorite: (id: number) => void;
-    location: 'browser' | 'trash' | 'favorites' | 'recents';
-    searchTerm: string;
-    searchMode: SearchMode;
-    aiSearchResults: AiSearchResult[];
-    previewingFileId: number | null;
+    setEditingId: (id: number | null) => void;
+    onNavigate: (folderId: number | null) => void;
+    onMove: (draggedIds: Set<number>, targetFolderId: number | null) => void;
+    onSortChange: (config: SortConfig) => void;
+    clearSelection: () => void;
+    setSelectedIds: (ids: Set<number>) => void;
+    onAction: (action: ContextAction, fileId: number | null) => void;
     clipboard: ClipboardState | null;
+    aiSearchResults: AiSearchResult[] | null;
+    previewingFileId: number | null;
 }
 
-const FileBrowser: React.FC<FileBrowserProps> = ({
-    files, allFiles, viewMode, onItemClick, onItemDoubleClick, onContextMenu,
-    selectedIds, setSelectedIds, clearSelection, onNavigate, currentFolderId,
-    sortConfig, setSortConfig, onMoveFiles, renamingId, setRenamingId, onRename,
-    onToggleFavorite, location, searchTerm, searchMode, aiSearchResults, previewingFileId,
-    clipboard
-}) => {
+const FileBrowser: React.FC<FileBrowserProps> = (props) => {
+    const {
+        files, viewMode, selectedIds, editingId, sortConfig,
+        onItemClick, onItemDoubleClick, onRename, setEditingId,
+        onSortChange, onNavigate, currentFolderId, location,
+        clearSelection, setSelectedIds, allFiles, onAction, clipboard,
+        aiSearchResults, previewingFileId, onMove
+    } = props;
+    
     const containerRef = useRef<HTMLDivElement>(null);
     const itemRefs = useRef(new Map<number, HTMLElement>());
-    
+    const { contextMenu, handleContextMenu, closeContextMenu } = useContextMenu();
+
     const { MarqueeComponent, handleMouseDown, handleMouseMove, handleMouseUp } = useMarqueeSelection({
-        itemRefs, containerRef, allItems: files, selectedIds, setSelectedIds, clearSelection
+        itemRefs,
+        containerRef,
+        allItems: files,
+        selectedIds,
+        setSelectedIds,
+        clearSelection,
     });
+    
+    const SortableHeader: React.FC<{ field: SortableField, label: string }> = ({ field, label }) => {
+        const isCurrentKey = sortConfig.key === field;
+        const directionIcon = isCurrentKey ? (sortConfig.direction === 'asc' ? ICONS.arrowUp : ICONS.arrowDown) : null;
+        const handleSort = () => {
+            const direction = isCurrentKey && sortConfig.direction === 'asc' ? 'desc' : 'asc';
+            onSortChange({ key: field, direction });
+        };
+        return (
+            <button className="flex items-center font-semibold text-text-secondary hover:text-text-primary" onClick={handleSort}>
+                {label} {directionIcon}
+            </button>
+        );
+    };
 
-    const aiSnippets = useMemo(() => {
-        return new Map(aiSearchResults.map(result => [result.id, result.snippet]));
-    }, [aiSearchResults]);
-
-    const handleDrop = (e: React.DragEvent, targetFolderId: number | null) => {
-        e.preventDefault(); e.stopPropagation();
-        const draggedIdsStr = e.dataTransfer.getData('application/json');
-        if (!draggedIdsStr) return;
-
-        const draggedIds = new Set<number>(JSON.parse(draggedIdsStr));
-        
-        if (targetFolderId !== null && isDroppingInChild(draggedIds, targetFolderId, allFiles)) {
-            alert("You cannot move a folder into one of its own subfolders.");
-            return;
+    const handleContainerClick = (e: React.MouseEvent) => {
+        if (e.target === containerRef.current) {
+            clearSelection();
         }
-        if (targetFolderId !== null && draggedIds.has(targetFolderId)) return;
-        if (location !== 'browser') return; // Prevent moving from trash/favorites
-
-        onMoveFiles(draggedIds, targetFolderId);
+        closeContextMenu();
     };
     
-    const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); };
-
-    const handleSort = (key: SortConfig['key']) => {
-        let direction: SortConfig['direction'] = 'asc';
-        if (sortConfig.key === key && sortConfig.direction === 'asc') {
-            direction = 'desc';
-        }
-        setSortConfig({ key, direction });
-    };
-
-    const renderHeader = () => {
-        if (viewMode === 'grid' || location === 'recents') return null;
+    const handleDrop = (targetFileId: number | null) => {
+        if (selectedIds.size === 0) return;
         
-        const renderSortArrow = (key: SortConfig['key']) => {
-            if (sortConfig.key !== key) return null;
-            return sortConfig.direction === 'asc' ? ICONS.arrowUp : ICONS.arrowDown;
-        };
-        
-        const headers: { key: SortConfig['key'], label: string, span: string }[] = [
-            { key: 'name', label: 'Name', span: 'col-span-7' },
-            { key: 'lastModified', label: location === 'trash' ? 'Date Trashed' : 'Last Modified', span: 'col-span-3' },
-            { key: 'size', label: 'File Size', span: 'col-span-2' },
-        ];
-        
-        return (
-            <div className="grid grid-cols-12 gap-4 px-4 py-2 font-semibold text-sm text-text-secondary border-b sticky top-0 bg-white/80 backdrop-blur-sm z-10">
-                <div className="col-span-1"></div>
-                {headers.map(h => (
-                    <div key={h.key} className={`${h.span} cursor-pointer hover:text-text-primary`} onClick={() => handleSort(h.key)}>
-                        {h.label} {renderSortArrow(h.key)}
-                    </div>
-                ))}
-            </div>
-        );
-    }
-
-    const renderEmptyState = () => {
-        let message = "This folder is empty.";
-        let suggestion = "Drag and drop files here to upload, or right-click to create a new folder.";
-
-        if (searchTerm) {
-            message = "No results found.";
-            suggestion = `Try a different search term or switch to an AI content search.`;
-        } else if (location === 'favorites') {
-            message = "No favorites yet.";
-            suggestion = "Click the star icon on any file or folder to add it here.";
-        } else if (location === 'trash') {
-            message = "The trash is empty.";
-            suggestion = "Deleted files will appear here.";
-        } else if (location === 'recents') {
-            message = "No recent files.";
-            suggestion = "Open or preview a file to have it show up here.";
+        let targetFolderId: number | null = null;
+        if (targetFileId !== null) {
+            const targetFile = allFiles.find(f => f.id === targetFileId);
+            if (targetFile?.type === 'folder') {
+                targetFolderId = targetFile.id;
+            } else {
+                targetFolderId = targetFile?.parentId ?? null;
+            }
+        } else {
+            targetFolderId = currentFolderId;
         }
 
+        // Prevent dropping a folder into itself
+        if (targetFolderId !== null && selectedIds.has(targetFolderId)) return;
 
-        return (
-            <div className="text-center text-text-secondary py-20">
-                <p className="font-semibold">{message}</p>
-                <p className="text-sm">{suggestion}</p>
-            </div>
-        );
+        onMove(selectedIds, targetFolderId);
     };
 
-    const renderFiles = () => {
-        if (files.length === 0) return renderEmptyState();
-
+    const memoizedFiles = useMemo(() => files.map(file => {
         const ItemComponent = viewMode === 'grid' ? FileGridItem : FileListItem;
+        const aiSnippet = aiSearchResults?.find(r => r.id === file.id)?.snippet;
+        const isDraggable = selectedIds.size > 0 && selectedIds.has(file.id);
 
-        const items = files.map(file => (
-            <div key={file.id} ref={el => {
-                if (el) {
-                    itemRefs.current.set(file.id, el)
-                } else {
-                    itemRefs.current.delete(file.id)
-                }
-            }}>
-                <ItemComponent
-                    file={file}
-                    isSelected={selectedIds.has(file.id)}
-                    isRenaming={renamingId === file.id}
-                    isPreviewing={previewingFileId === file.id}
-                    onClick={(e) => onItemClick(e, file.id)}
-                    onDoubleClick={() => onItemDoubleClick(file)}
-                    onContextMenu={(e) => onContextMenu(e, file)}
-                    onRename={onRename}
-                    setRenamingId={setRenamingId}
-                    onDrop={handleDrop}
-                    selectedIds={selectedIds}
-                    onToggleFavorite={onToggleFavorite}
-                    location={location}
-                    aiSnippet={searchMode === 'content' ? aiSnippets.get(file.id) : undefined}
-                    clipboard={clipboard}
-                />
+        return (
+             <ItemComponent
+                key={file.id}
+                file={file}
+                isSelected={selectedIds.has(file.id)}
+                isEditing={editingId === file.id}
+                onClick={onItemClick}
+                onDoubleClick={onItemDoubleClick}
+                onContextMenu={handleContextMenu}
+                onRename={onRename}
+                setEditingId={setEditingId}
+                setRef={(el) => {
+                    if (el) itemRefs.current.set(file.id, el);
+                    else itemRefs.current.delete(file.id);
+                }}
+                onDrop={handleDrop}
+                isDraggable={isDraggable}
+                location={location}
+                clipboard={clipboard}
+                onAction={onAction}
+                aiSnippet={aiSnippet}
+                isPreviewing={previewingFileId === file.id}
+                allFiles={allFiles}
+            />
+        );
+    }), [files, viewMode, selectedIds, editingId, onItemClick, onItemDoubleClick, handleContextMenu, onRename, setEditingId, location, clipboard, onAction, aiSearchResults, previewingFileId, onMove, selectedIds, allFiles]);
+
+    const GridWrapper: React.FC<{children: React.ReactNode}> = ({ children }) => (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-6 pt-4">
+            {children}
+        </div>
+    );
+
+    const ListWrapper: React.FC<{children: React.ReactNode}> = ({ children }) => (
+        <div>
+            <div className="grid grid-cols-[minmax(0,3fr)_1fr_2fr_2fr] gap-4 px-4 pb-2 border-b border-border-color sticky top-0 bg-white z-10">
+                <SortableHeader field="name" label="Name" />
+                <SortableHeader field="size" label="Size" />
+                {location === 'trash' ? (
+                    <>
+                        <SortableHeader field="trashedOn" label="Date Trashed" />
+                        <span/>
+                    </>
+                ) : (
+                    <>
+                        <SortableHeader field="lastModified" label="Last Modified" />
+                        <SortableHeader field="lastOpened" label="Last Opened" />
+                    </>
+                )}
             </div>
-        ));
-        
-        if (viewMode === 'grid') return <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">{items}</div>;
-        return <div className="space-y-1">{items}</div>;
-    };
+            <div className="space-y-1 mt-2">{children}</div>
+        </div>
+    );
+    
+    const Wrapper = viewMode === 'grid' ? GridWrapper : ListWrapper;
 
-    const showBreadcrumbs = location === 'browser' && !searchTerm;
+    const getTitle = () => {
+        switch(location) {
+            case 'trash': return 'Trash';
+            case 'favorites': return 'Favorites';
+            case 'recents': return 'Recent Files';
+            default: return null;
+        }
+    };
+    const title = getTitle();
 
     return (
-        <div 
-            ref={containerRef}
-            className="flex-1 p-4 overflow-y-auto" 
-            onMouseDown={handleMouseDown} 
-            onMouseMove={handleMouseMove} 
-            onMouseUp={handleMouseUp}
-            onDrop={(e) => handleDrop(e, currentFolderId)}
-            onDragOver={handleDragOver}
-            onContextMenu={(e) => onContextMenu(e, null)}
+        <div className="flex-1 flex flex-col overflow-auto"
+            onDrop={(e) => { e.preventDefault(); handleDrop(null); }}
+            onDragOver={e => e.preventDefault()}
         >
-            {showBreadcrumbs && <Breadcrumbs currentFolderId={currentFolderId} files={allFiles} onNavigate={onNavigate} />}
-            {renderHeader()}
-            {renderFiles()}
-            {MarqueeComponent}
+            {location === 'browser' && <Breadcrumbs currentFolderId={currentFolderId} files={allFiles} onNavigate={onNavigate} />}
+            {title && <h2 className="text-xl font-semibold text-text-primary mb-4">{title}</h2>}
+            <div className="flex-1 overflow-auto"
+                ref={containerRef}
+                onClick={handleContainerClick}
+                onContextMenu={(e) => {
+                    if(e.target === containerRef.current) {
+                        handleContextMenu(e, null)
+                    }
+                }}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+            >
+                {files.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-text-secondary">
+                        <p>This space is empty.</p>
+                    </div>
+                ) : (
+                    <Wrapper>{memoizedFiles}</Wrapper>
+                )}
+                {contextMenu && <ContextMenu {...contextMenu} {...props} onClose={closeContextMenu} />}
+                {MarqueeComponent}
+            </div>
         </div>
     );
 };

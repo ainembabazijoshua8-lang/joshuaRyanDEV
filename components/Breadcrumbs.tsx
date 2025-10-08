@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { FileItem } from '../types';
+import { FileItem } from '../types.ts';
 
 interface BreadcrumbsProps {
     currentFolderId: number | null;

@@ -1,66 +1,59 @@
-
 import React from 'react';
-import { ModalState, FileItem } from '../../types';
-import UploadModal from './UploadModal';
-import NewFolderModal from './NewFolderModal';
-import ConfirmDeleteModal from './ConfirmDeleteModal';
-import EditorModal from './EditorModal';
-import DetailsModal from './DetailsModal';
-import SummaryModal from './SummaryModal';
+import { ModalState, FileItem, ChatMessage } from '../../types.ts';
+import UploadModal from './UploadModal.tsx';
+import NewFolderModal from './NewFolderModal.tsx';
+import ConfirmDeleteModal from './ConfirmDeleteModal.tsx';
+import EditorModal from './EditorModal.tsx';
+import DetailsModal from './DetailsModal.tsx';
+import SummaryModal from './SummaryModal.tsx';
+import AiAssistantModal from './AiAssistantModal.tsx';
 
 interface ModalRendererProps {
-    modal: ModalState;
-    setModal: (modal: ModalState) => void;
-    files: FileItem[];
+    modalState: ModalState;
+    setModalState: (state: ModalState) => void;
     setFiles: React.Dispatch<React.SetStateAction<FileItem[]>>;
+    assistantHistory: ChatMessage[];
+    onAssistantPrompt: (prompt: string) => void;
+    isAssistantProcessing?: boolean;
+    allFiles: FileItem[];
+    currentFolderId: number | null;
 }
 
-const ModalRenderer: React.FC<ModalRendererProps> = ({ 
-    modal, setModal, files, setFiles
-}) => {
-    const closeModal = () => setModal({ type: null });
+const ModalRenderer: React.FC<ModalRendererProps> = (props) => {
+    const { modalState, setModalState, setFiles, assistantHistory, onAssistantPrompt, isAssistantProcessing, allFiles, currentFolderId } = props;
+    
+    const onClose = () => setModalState(null);
+    
+    if (!modalState) return null;
 
-    if (modal.type === null) {
-        return null;
-    }
-
-    // Fix: Replaced an if-chain with a switch statement. Using a switch on the
-    // discriminant property ('type') of a discriminated union ('ModalState') allows
-    // TypeScript to correctly narrow the type of 'modal' within each case block,
-    // resolving errors about properties not existing on the union type.
-    switch (modal.type) {
+    switch (modalState.type) {
         case 'upload':
-            return <UploadModal onClose={closeModal} setFiles={setFiles} currentFolderId={modal.currentFolderId} />;
-        
-        case 'new-folder':
-            return <NewFolderModal onClose={closeModal} setFiles={setFiles} currentFolderId={modal.currentFolderId} />;
-
-        case 'confirm-delete': {
-            const { onConfirm, count, isPermanent, isEmptyingAll } = modal;
-            return <ConfirmDeleteModal 
-                onClose={closeModal} 
-                onConfirm={() => {
-                    onConfirm();
-                    closeModal();
-                }} 
-                count={count}
-                isPermanent={isPermanent}
-                isEmptyingAll={isEmptyingAll}
+            return <UploadModal onClose={onClose} setFiles={setFiles} currentFolderId={modalState.currentFolderId} />;
+        case 'newFolder':
+            return <NewFolderModal 
+                onClose={onClose} 
+                setFiles={setFiles} 
+                currentFolderId={modalState.currentFolderId} 
+                allFiles={allFiles}
+                setModalState={setModalState}
+                initialName={modalState.initialName}
             />;
-        }
-
-        case 'view':
-            return <EditorModal file={modal.file} onClose={closeModal} setFiles={setFiles} />;
-
+        case 'confirmAction':
+            return <ConfirmDeleteModal onClose={onClose} {...modalState} />;
+        case 'editor':
+            return <EditorModal file={modalState.file} setModalState={setModalState} setFiles={setFiles} />;
         case 'details':
-            return <DetailsModal files={modal.files} onClose={closeModal} />;
-
-        case 'summarize':
-            return <SummaryModal file={modal.file} onClose={closeModal} />;
-        
+            return <DetailsModal files={modalState.files} onClose={onClose} />;
+        case 'summary':
+            return <SummaryModal file={modalState.file} onClose={onClose} />;
+        case 'assistant':
+             return <AiAssistantModal 
+                onClose={onClose} 
+                history={assistantHistory}
+                onPrompt={onAssistantPrompt}
+                isProcessing={isAssistantProcessing}
+            />;
         default:
-            // This default case handles any unhandled modal types, ensuring type safety.
-            const _exhaustiveCheck: never = modal;
             return null;
     }
 };

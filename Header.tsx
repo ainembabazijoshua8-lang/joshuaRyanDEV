@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
-import { ICONS } from '../constants.tsx';
-import { ViewMode, FileItem, Location, ContextAction } from '../types.ts';
+import { ICONS } from './constants.tsx';
+import { ViewMode, FileItem, Location, ContextAction } from './types.ts';
 
 interface HeaderProps {
     onUploadClick: () => void;

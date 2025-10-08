@@ -1,28 +1,11 @@
+import { FileItem, FileVersion } from '../types.ts';
+import { generateTagsForImage } from '../services/geminiService.ts';
+import { EDITABLE_EXTENSIONS, PREVIEWABLE_EXTENSIONS } from '../constants.tsx';
 
-import { FileItem } from '../types';
-import { generateTagsForImage } from '../services/geminiService';
-
-export const getFileExtension = (filename: string): string => {
-    return filename.slice(((filename.lastIndexOf(".") - 1) >>> 0) + 2).toLowerCase();
-};
-
-export const isImage = (filename: string): boolean => {
-    const ext = getFileExtension(filename);
-    return ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'].includes(ext);
-};
-
-export const isPdf = (filename: string): boolean => {
-    return getFileExtension(filename) === 'pdf';
-};
-
-export const isEditable = (filename:string): boolean => {
-    const ext = getFileExtension(filename);
-    return ['txt', 'md', 'json', 'html', 'css', 'js', 'ts'].includes(ext);
-};
-
-let lastId = Date.now();
 export const generateUniqueId = (): number => {
-    return ++lastId;
+    // Combine timestamp with a random number to ensure a high degree of uniqueness
+    // in client-side generation without needing to check existing IDs.
+    return Math.floor(Math.random() * 1000000) + Date.now();
 };
 
 export const formatBytes = (bytes: number, decimals = 2): string => {
@@ -34,110 +17,216 @@ export const formatBytes = (bytes: number, decimals = 2): string => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 };
 
-export const processFilesForUpload = async (fileList: FileList, parentId: number | null): Promise<FileItem[]> => {
-    const fileArray = Array.from(fileList);
-    
-    const newFilePromises = fileArray.map(file => new Promise<FileItem>(resolve => {
+export const isImage = (fileName: string): boolean => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    return !!extension && ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(extension);
+};
+
+export const isEditable = (fileName: string): boolean => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    return !!extension && EDITABLE_EXTENSIONS.includes(extension);
+};
+
+export const isPreviewable = (fileName: string): boolean => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    return !!extension && PREVIEWABLE_EXTENSIONS.includes(extension);
+};
+
+const readFileAs = (file: File, format: 'dataURL' | 'text', signal: AbortSignal): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        if (signal.aborted) {
+            return reject(new DOMException('Aborted', 'AbortError'));
+        }
         const reader = new FileReader();
-        const commonProps = {
-            id: generateUniqueId(),
-            name: file.name,
-            type: 'file' as 'file',
-            lastModified: file.lastModified,
-            size: file.size,
-            parentId: parentId,
+        
+        const abortHandler = () => {
+            reader.abort();
+            reject(new DOMException('Aborted', 'AbortError'));
         };
 
-        if (isImage(file.name)) {
-             reader.onload = async () => {
-                const dataUrl = reader.result as string;
-                const imageBytes = dataUrl.split(',')[1];
-                const tags = await generateTagsForImage(imageBytes, file.type);
-                resolve({ ...commonProps, url: dataUrl, tags });
-            };
+        signal.addEventListener('abort', abortHandler, { once: true });
+
+        reader.onload = () => {
+            signal.removeEventListener('abort', abortHandler);
+            resolve(reader.result as string)
+        };
+        reader.onerror = () => {
+             signal.removeEventListener('abort', abortHandler);
+             reject(reader.error)
+        };
+
+        if (format === 'dataURL') {
             reader.readAsDataURL(file);
-        } else if (isPdf(file.name)) {
-            reader.onload = () => resolve({ ...commonProps, url: reader.result as string });
-            reader.readAsDataURL(file);
-        } else if (isEditable(file.name)) {
-            reader.onload = () => {
-                const content = reader.result as string;
-                resolve({ ...commonProps, versions: [{ timestamp: Date.now(), content }] });
-            };
-            reader.readAsText(file);
         } else {
-            resolve(commonProps);
+            reader.readAsText(file);
         }
-    }));
-
-    return Promise.all(newFilePromises);
+    });
 };
 
-/**
- * Checks if a dragged item (or one of the dragged items) is a parent
- * of the target folder, preventing dropping a folder into its own child.
- */
-export const isDroppingInChild = (draggedIds: Set<number>, targetFolderId: number, allFiles: FileItem[]): boolean => {
-    const draggedFolders = new Set(Array.from(draggedIds).filter(id => allFiles.find(f => f.id === id)?.type === 'folder'));
-    if (draggedFolders.size === 0) return false; // Not dragging a folder, so it's safe
+const simulateProgress = (duration: number, onProgress: (p: number) => void, signal: AbortSignal): Promise<void> => {
+    return new Promise((resolve, reject) => {
+        let progress = 0;
+        const steps = 10;
+        const stepDuration = duration / steps;
 
-    let currentParentId: number | null = targetFolderId;
-    while (currentParentId !== null) {
-        if (draggedFolders.has(currentParentId)) {
-            return true; // Found a dragged folder in the target's ancestry
+        const interval = setInterval(() => {
+            if (signal.aborted) {
+                clearInterval(interval);
+                return reject(new DOMException('Aborted', 'AbortError'));
+            }
+            progress += 100 / steps;
+            onProgress(Math.min(progress, 90)); // Cap at 90 to leave room for final processing
+            if (progress >= 100) {
+                clearInterval(interval);
+                resolve();
+            }
+        }, stepDuration);
+    });
+};
+
+export const processSingleFileForUpload = async (
+    file: File, 
+    parentId: number | null, 
+    onProgress: (progress: number) => void, 
+    signal: AbortSignal
+): Promise<FileItem> => {
+    
+    // Simulate reading/processing progress
+    const simulatedDuration = Math.max(500, file.size / 50000); // at least 0.5s, scales with size
+    
+    await simulateProgress(simulatedDuration, onProgress, signal);
+
+    if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+
+    const newFile: Partial<FileItem> = {
+        id: generateUniqueId(),
+        name: file.name,
+        type: 'file',
+        lastModified: file.lastModified,
+        size: file.size,
+        parentId,
+    };
+
+    if (isImage(file.name)) {
+        const base64 = await readFileAs(file, 'dataURL', signal);
+        if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        newFile.url = base64;
+        
+        onProgress(95); // Progress before API call
+        
+        try {
+            // No need to check signal here as tag generation is a nice-to-have, not critical
+            const tags = await generateTagsForImage(base64.split(',')[1], file.type);
+            newFile.tags = tags;
+        } catch (e) {
+            console.error("Tag generation failed for", file.name, e);
         }
-        const currentParent = allFiles.find(f => f.id === currentParentId);
-        currentParentId = currentParent ? currentParent.parentId : null;
-    }
 
-    return false;
-};
-
-/**
- * Determines the correct parent folder for a file being restored from the trash.
- * If the original parent exists and is not trashed, it's used. Otherwise, it defaults to the root.
- */
-export const findRestorationParent = (fileToRestore: FileItem, allFiles: FileItem[]): number | null => {
-    if (fileToRestore.parentId === null) {
-        return null; // Already at root
-    }
-    const parent = allFiles.find(f => f.id === fileToRestore.parentId);
-    
-    // If parent doesn't exist or is also trashed, restore to root.
-    if (!parent || parent.isTrashed) {
-        return null;
+    } else if (isEditable(file.name)) {
+        const content = await readFileAs(file, 'text', signal);
+        if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        newFile.versions = [{ timestamp: Date.now(), content }];
+    } else if (isPreviewable(file.name)) {
+        const blob = new Blob([file], { type: file.type });
+        newFile.url = URL.createObjectURL(blob);
     }
     
-    return fileToRestore.parentId;
+    onProgress(100);
+    return newFile as FileItem;
 };
 
-/**
- * Recursively duplicates files and folders for the copy-paste feature.
- */
+
+export const findRestorationParent = (file: FileItem, allFiles: FileItem[]): number | null => {
+    if (file.parentId === null) return null; // Already at root
+    const parentExists = allFiles.some(f => f.id === file.parentId && !f.trashedOn);
+    return parentExists ? file.parentId : null;
+};
+
+export const downloadFile = (file: FileItem) => {
+    if (!file || file.type === 'folder') return;
+    const a = document.createElement('a');
+    let url: string | undefined = file.url;
+
+    if (!url && file.versions && file.versions.length > 0) {
+        // Create a blob for text-based content
+        const blob = new Blob([file.versions[0].content], { type: 'text/plain' });
+        url = URL.createObjectURL(blob);
+        a.href = url;
+    } else if (url) {
+        a.href = url;
+    } else {
+        console.error("No downloadable content for file:", file.name);
+        return; // No URL and no content to create a blob from
+    }
+    
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    
+    // Revoke blob URL after download
+    if (url && url.startsWith('blob:')) {
+        URL.revokeObjectURL(url);
+    }
+};
+
 export const duplicateFiles = (
-    idsToCopy: Set<number>,
+    fileIds: Set<number>,
     allFiles: FileItem[],
     targetParentId: number | null
 ): FileItem[] => {
     const newFiles: FileItem[] = [];
-    const idMap = new Map<number, number>(); // Maps old ID to new ID
+    const idMap = new Map<number, number>();
 
-    const itemsToCopy = allFiles.filter(f => idsToCopy.has(f.id));
+    const filesToCopy = allFiles.filter(f => fileIds.has(f.id));
 
-    // First pass: create all new items and map old IDs to new IDs
-    itemsToCopy.forEach(item => {
+    // Helper to find a unique name in the target folder, considering existing files
+    // and other files being copied in the same batch.
+    const findAvailableName = (name: string, parentId: number | null, existingFiles: FileItem[], newClonedFiles: FileItem[]): string => {
+        const siblings = existingFiles.filter(file => file.parentId === parentId);
+        const newSiblings = newClonedFiles.filter(file => file.parentId === parentId);
+        
+        let finalName = name;
+        let counter = 1;
+        
+        const nameExists = (n: string) => 
+            siblings.some(s => s.name.toLowerCase() === n.toLowerCase()) ||
+            newSiblings.some(s => s.name.toLowerCase() === n.toLowerCase());
+
+        if (nameExists(finalName)) {
+            const extensionIndex = name.lastIndexOf('.');
+            const baseName = extensionIndex > -1 ? name.substring(0, extensionIndex) : name;
+            const extension = extensionIndex > -1 ? name.substring(extensionIndex) : '';
+            
+            do {
+                finalName = `${baseName} (${counter})${extension}`;
+                counter++;
+            } while (nameExists(finalName));
+        }
+        
+        return finalName;
+    };
+
+    // First pass: create new top-level items and map old IDs to new IDs
+    for (const file of filesToCopy) {
         const newId = generateUniqueId();
-        idMap.set(item.id, newId);
+        idMap.set(file.id, newId);
+
+        // If pasting in the same folder, add a "Copy" suffix. Otherwise, use the original name.
+        const initialName = file.parentId === targetParentId ? `Copy of ${file.name}` : file.name;
+        const uniqueName = findAvailableName(initialName, targetParentId, allFiles, newFiles);
+
         newFiles.push({
-            ...item,
+            ...file,
             id: newId,
             parentId: targetParentId,
+            name: uniqueName,
             lastModified: Date.now(),
         });
-    });
+    }
 
-    // Second pass: recursively copy children for any copied folders
-    const deepCopyChildren = (oldParentId: number, newParentId: number) => {
+    // Recursively find and copy children
+    const copyChildren = (oldParentId: number, newParentId: number) => {
         const children = allFiles.filter(f => f.parentId === oldParentId);
         for (const child of children) {
             const newChildId = generateUniqueId();
@@ -146,23 +235,38 @@ export const duplicateFiles = (
                 ...child,
                 id: newChildId,
                 parentId: newParentId,
-                lastModified: Date.now(),
             };
             newFiles.push(newChild);
-            if (newChild.type === 'folder') {
-                deepCopyChildren(child.id, newChild.id);
+
+            if (child.type === 'folder') {
+                copyChildren(child.id, newChildId);
             }
         }
     };
-
-    newFiles.forEach(newItem => {
-        if (newItem.type === 'folder') {
-            const originalId = Array.from(idMap.entries()).find(([, newId]) => newId === newItem.id)?.[0];
-            if (originalId) {
-                deepCopyChildren(originalId, newItem.id);
-            }
+    
+    for (const file of filesToCopy) {
+        if (file.type === 'folder') {
+            copyChildren(file.id, idMap.get(file.id)!);
         }
-    });
+    }
 
     return newFiles;
+};
+
+export const isDroppingInChild = (draggedIds: Set<number>, targetFolderId: number | null, allFiles: FileItem[]): boolean => {
+    if (targetFolderId === null) return false;
+    if (draggedIds.has(targetFolderId)) return true;
+
+    let currentId = targetFolderId;
+    while (currentId !== null) {
+        const parent = allFiles.find(f => f.id === currentId);
+        if (!parent || parent.parentId === null) {
+            return false;
+        }
+        if (draggedIds.has(parent.parentId)) {
+            return true;
+        }
+        currentId = parent.parentId;
+    }
+    return false;
 };

@@ -1,99 +1,77 @@
-import { AiSearchResult, ChatMessage } from "../types";
 
-const API_BASE_URL = '/api'; // Use relative path for proxying
+// services/geminiService.ts
+import { FileItem, ChatMessage, AiSearchResult, AiAssistantResponse } from '../types.ts';
 
-/**
- * Summarizes the given content by calling the backend API.
- */
+const API_BASE_URL = 'http://localhost:3001/api';
+
+async function handleResponse<T>(response: Response): Promise<T> {
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'API request failed');
+    }
+    return response.json();
+}
+
+export const generateTagsForImage = async (base64ImageData: string, mimeType: string): Promise<string[]> => {
+    const response = await fetch(`${API_BASE_URL}/generate-tags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64ImageData, mimeType }),
+    });
+    const data = await handleResponse<{ tags: string[] }>(response);
+    return data.tags;
+};
+
+export const chatWithDocument = async (documentContent: string, question: string, history: ChatMessage[]): Promise<string> => {
+    const response = await fetch(`${API_BASE_URL}/chat-with-document`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentContent, question, history }),
+    });
+    const data = await handleResponse<{ answer: string }>(response);
+    return data.answer;
+};
+
 export const summarizeContent = async (content: string): Promise<string> => {
-    try {
-        const response = await fetch(`${API_BASE_URL}/summarize`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content }),
-        });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Network response was not ok.');
-        }
-        const data = await response.json();
-        return data.summary;
-    } catch (error) {
-        console.error("Error summarizing content:", error);
-        throw new Error("Failed to generate summary. Please check the API server and try again.");
-    }
+    const response = await fetch(`${API_BASE_URL}/summarize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+    });
+    const data = await handleResponse<{ summary: string }>(response);
+    return data.summary;
 };
 
-/**
- * Generates descriptive tags for an image by calling the backend API.
- */
-export const generateTagsForImage = async (base64Image: string, mimeType: string): Promise<string[]> => {
-    try {
-        const response = await fetch(`${API_BASE_URL}/generate-tags`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ base64Image, mimeType }),
-        });
-        if (!response.ok) return []; // Graceful failure
-        const data = await response.json();
-        return data.tags || [];
-    } catch (error) {
-        console.error("Error generating image tags:", error);
-        return [];
-    }
+export const performAiSearch = async (files: FileItem[], query: string): Promise<AiSearchResult[]> => {
+    const searchableFiles = files
+        .filter(f => f.type === 'file' && f.versions && f.versions.length > 0)
+        .map(f => ({
+            id: f.id,
+            name: f.name,
+            content: f.versions![0].content,
+        }));
+
+    if (searchableFiles.length === 0) return [];
+
+    const response = await fetch(`${API_BASE_URL}/ai-search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: searchableFiles, query }),
+    });
+    const data = await handleResponse<{ results: AiSearchResult[] }>(response);
+    return data.results;
 };
 
-/**
- * Performs a semantic search over file contents by calling the backend API.
- */
-export const performAiSearch = async (
-    searchTerm: string,
-    files: { id: number; content: string }[]
-): Promise<AiSearchResult[]> => {
-    try {
-        const response = await fetch(`${API_BASE_URL}/ai-search`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ searchTerm, files }),
-        });
-        if (!response.ok) {
-             const errorData = await response.json();
-            throw new Error(errorData.error || 'Network response was not ok.');
-        }
-        const results = await response.json();
-        if (Array.isArray(results)) {
-            // Ensure ids are numbers, as model might return strings
-            return results.map(r => ({ ...r, id: Number(r.id) })).filter(r => r.id && r.snippet);
-        }
-        return [];
-    } catch (error) {
-        console.error("Error performing AI search:", error);
-        throw new Error("AI search failed. Please try again later.");
-    }
-};
-
-/**
- * Sends a question about a document to the backend API for an AI-powered answer.
- */
-export const chatWithDocument = async (
-    documentContent: string,
-    question: string,
-    chatHistory: ChatMessage[]
-): Promise<string> => {
-    try {
-        const response = await fetch(`${API_BASE_URL}/chat-with-document`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documentContent, question, chatHistory }),
-        });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Network response was not ok.');
-        }
-        const data = await response.json();
-        return data.answer;
-    } catch (error) {
-        console.error("Error chatting with document:", error);
-        throw new Error("Failed to get a response from the AI. Please try again.");
-    }
+export const invokeAiAssistant = async (
+    prompt: string,
+    files: FileItem[],
+    selectedIds: Set<number>,
+    currentFolderId: number | null
+): Promise<AiAssistantResponse> => {
+    const response = await fetch(`${API_BASE_URL}/ai-assistant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, files, selectedIds: Array.from(selectedIds), currentFolderId }),
+    });
+    return handleResponse<AiAssistantResponse>(response);
 };

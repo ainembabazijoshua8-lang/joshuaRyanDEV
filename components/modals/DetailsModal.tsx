@@ -1,7 +1,7 @@
 
 import React, { useMemo } from 'react';
-import { FileItem } from '../../types';
-import { formatBytes } from '../../utils/fileUtils';
+import { FileItem } from '../../types.ts';
+import { formatBytes } from '../../utils/fileUtils.ts';
 
 interface DetailsModalProps {
     files: FileItem[];

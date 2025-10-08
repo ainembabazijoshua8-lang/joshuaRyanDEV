@@ -1,6 +1,5 @@
-
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { FileItem, SortConfig, SortableField, SortDirection } from '../types';
+import { FileItem, SortConfig, SortableField, SortDirection } from '../types.ts';
 
 export const useFiles = (initialFiles: FileItem[]) => {
     const [files, setFiles] = useState<FileItem[]>(() => {
@@ -38,12 +37,23 @@ export const useFiles = (initialFiles: FileItem[]) => {
             if (a.type === 'folder' && b.type !== 'folder') return -1;
             if (a.type !== 'folder' && b.type === 'folder') return 1;
 
+            const key = sortConfig.key;
+            const valA = a[key as keyof FileItem];
+            const valB = b[key as keyof FileItem];
+
             let comparison = 0;
-            if (a[sortConfig.key] < b[sortConfig.key]) {
-                comparison = -1;
-            }
-            if (a[sortConfig.key] > b[sortConfig.key]) {
-                comparison = 1;
+            
+            // Handle null/undefined values, sorting them to the bottom
+            if (valA == null && valB != null) comparison = 1;
+            else if (valA != null && valB == null) comparison = -1;
+            else if (valA == null && valB == null) comparison = 0;
+            else if (typeof valA === 'string' && typeof valB === 'string') {
+                comparison = valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' });
+            } else {
+                 // @ts-ignore
+                if (valA < valB) comparison = -1;
+                 // @ts-ignore
+                if (valA > valB) comparison = 1;
             }
 
             return sortConfig.direction === 'asc' ? comparison : -comparison;

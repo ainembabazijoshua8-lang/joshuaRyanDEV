@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect } from 'react';
-import { FileItem } from '../../types';
-import { summarizeContent } from '../../services/geminiService';
+import { FileItem } from '../../types.ts';
+import { summarizeContent } from '../../services/geminiService.ts';
 
 interface SummaryModalProps {
     file: FileItem;
@@ -14,25 +13,32 @@ const SummaryModal: React.FC<SummaryModalProps> = ({ file, onClose }) => {
     const [error, setError] = useState('');
 
     useEffect(() => {
+        let isMounted = true;
         const generateSummary = async () => {
             const latestContent = (file.versions && file.versions.length > 0) ? file.versions[0].content : null;
 
             if (!latestContent) {
-                setError('File has no content to summarize.');
-                setIsLoading(false);
+                if (isMounted) {
+                    setError('File has no content to summarize.');
+                    setIsLoading(false);
+                }
                 return;
             }
             try {
                 const result = await summarizeContent(latestContent);
-                setSummary(result);
+                if (isMounted) setSummary(result);
             } catch (err) {
-                setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+                if (isMounted) setError(err instanceof Error ? err.message : 'An unknown error occurred.');
             } finally {
-                setIsLoading(false);
+                if (isMounted) setIsLoading(false);
             }
         };
 
         generateSummary();
+        
+        return () => {
+            isMounted = false;
+        };
     }, [file]);
 
     return (

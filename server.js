@@ -1,117 +1,193 @@
+// server.js
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
-import { GoogleGenAI, Type } from '@google/genai';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-dotenv.config();
+import 'dotenv/config';
+import { GoogleGenAI, Type } from "@google/genai";
 
 const app = express();
-const port = process.env.PORT || 3000;
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const port = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 if (!process.env.API_KEY) {
-    throw new Error("API_KEY is not defined in the environment variables.");
+    throw new Error("API_KEY environment variable not set.");
 }
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// API Endpoints
-app.post('/api/summarize', async (req, res) => {
+// Endpoint to generate tags for an image
+app.post('/api/generate-tags', async (req, res) => {
+    const { image, mimeType } = req.body;
     try {
-        const { content } = req.body;
-        if (!content) return res.status(400).json({ error: 'Content is required.' });
-        
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
-            contents: `Summarize the following content concisely:\n\n---\n${content}\n---`,
+            contents: {
+                parts: [
+                    { inlineData: { data: image, mimeType } },
+                    { text: "Analyze this image and generate 3-5 relevant, single-keyword tags. Return as a JSON object: {\"tags\": [\"tag1\", \"tag2\"]}" }
+                ]
+            },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: { tags: { type: Type.ARRAY, items: { type: Type.STRING } } },
+                    required: ['tags']
+                }
+            }
+        });
+        res.json(JSON.parse(response.text));
+    } catch (error) {
+        console.error('Error in /api/generate-tags:', error);
+        res.status(500).json({ error: 'Failed to generate tags' });
+    }
+});
+
+// Endpoint for document chat
+app.post('/api/chat-with-document', async (req, res) => {
+    const { documentContent, question, history } = req.body;
+    try {
+        const chat = ai.chats.create({
+            model: 'gemini-2.5-flash',
+            config: {
+                systemInstruction: `You are an AI assistant. The user has provided a document and will ask questions. Answer based *only* on the document's content. Document:\n\n---\n\n${documentContent}\n\n---`,
+            },
+            history: history.map((m: any) => ({ role: m.role, parts: [{ text: m.content }] })),
+        });
+        const response = await chat.sendMessage({ message: question });
+        res.json({ answer: response.text });
+    } catch (error) {
+        console.error('Error in /api/chat-with-document:', error);
+        res.status(500).json({ error: 'Failed to get chat response' });
+    }
+});
+
+// Endpoint for summarization
+app.post('/api/summarize', async (req, res) => {
+    const { content } = req.body;
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: `Please provide a concise summary of the following document:\n\n${content}`,
         });
         res.json({ summary: response.text });
     } catch (error) {
         console.error('Error in /api/summarize:', error);
-        res.status(500).json({ error: 'Failed to generate summary.' });
+        res.status(500).json({ error: 'Failed to generate summary' });
     }
 });
 
-app.post('/api/generate-tags', async (req, res) => {
-    try {
-        const { base64Image, mimeType } = req.body;
-        if (!base64Image || !mimeType) return res.status(400).json({ error: 'Image data and mimeType are required.' });
-        
-        const imagePart = { inlineData: { data: base64Image, mimeType } };
-        const textPart = { text: 'Generate 5-7 relevant, single-word, lowercase tags for this image. Return as a JSON object like {"tags": ["tag1", "tag2"]}.' };
-        
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: { parts: [imagePart, textPart] },
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: { type: Type.OBJECT, properties: { tags: { type: Type.ARRAY, items: { type: Type.STRING } } } }
-            }
-        });
-        const jsonString = response.text.trim().replace(/^```json\s*|```\s*$/g, '');
-        res.json(JSON.parse(jsonString));
-    } catch (error) {
-        console.error('Error in /api/generate-tags:', error);
-        res.status(500).json({ tags: [] });
-    }
-});
-
+// Endpoint for AI content search
 app.post('/api/ai-search', async (req, res) => {
+    const { files, query } = req.body;
     try {
-        const { searchTerm, files } = req.body;
-        if (!searchTerm || !files) return res.status(400).json({ error: 'Search term and files are required.' });
-        if (files.length === 0) return res.json([]);
-
-        const fileContentForPrompt = files.map(f => `FILE_ID: ${f.id}\nCONTENT:\n${f.content}\n---`).join('\n');
-        const prompt = `You are an AI file assistant. Find files relevant to the query. For each match, provide its ID and a short, relevant snippet (max 15 words) from its content. Query: "${searchTerm}"\n\nFile Contents:\n${fileContentForPrompt}`;
-        
+        const prompt = `
+            User query: "${query}"
+            Documents:
+            ${files.map((f: any) => `ID: ${f.id}, Name: "${f.name}", Content: "${f.content.substring(0, 2000).replace(/"/g, "'")}"`).join('\n\n')}
+            
+            Analyze the documents and query. Return a JSON object with a key "results" which is an array of objects. Each object should have an "id" (the document ID) and a "snippet" (a short, relevant quote from the content explaining why it matches).
+            Example: {"results": [{"id": 123, "snippet": "...relevant text..."}]}
+        `;
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
-                responseSchema: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { id: { type: Type.NUMBER }, snippet: { type: Type.STRING } }, required: ["id", "snippet"] } }
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        results: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    id: { type: Type.NUMBER },
+                                    snippet: { type: Type.STRING }
+                                },
+                                required: ['id', 'snippet']
+                            }
+                        }
+                    },
+                    required: ['results']
+                }
             }
         });
-        const jsonString = response.text.trim().replace(/^```json\s*|```\s*$/g, '');
-        res.json(JSON.parse(jsonString));
+        res.json(JSON.parse(response.text));
     } catch (error) {
         console.error('Error in /api/ai-search:', error);
-        res.status(500).json({ error: 'AI search failed.' });
+        res.status(500).json({ error: 'Failed to perform AI search' });
     }
 });
 
-app.post('/api/chat-with-document', async (req, res) => {
+// Endpoint for the AI Assistant
+app.post('/api/ai-assistant', async (req, res) => {
+    const { prompt, files, selectedIds, currentFolderId } = req.body;
     try {
-        const { documentContent, question, chatHistory } = req.body;
-        if (!documentContent || !question) return res.status(400).json({ error: 'Document content and question are required.' });
+        const systemInstruction = `
+        You are an AI assistant for a file management application. Your goal is to convert user's natural language prompts into a sequence of executable actions.
+        You must respond with a JSON object containing two keys: "explanation" (a user-friendly string explaining what you're about to do) and "actions" (an array of action objects).
 
-        const history = (chatHistory || []).map((m: { role: string, content: string}) => `${m.role}: ${m.content}`).join('\n');
-        const prompt = `You are a helpful AI assistant. Answer the question based ONLY on the provided document content. Do not use external knowledge. If the answer isn't in the document, say so. Use the chat history for context. \n\nDOCUMENT:\n---\n${documentContent}\n---\n\nCHAT HISTORY:\n${history}\n\nQUESTION: ${question}`;
+        Available Actions:
+        1. selectFiles: Selects files by name.
+           - { "action": "selectFiles", "fileNames": ["name1.txt", "image.png"] }
+        2. createFolder: Creates a new folder in the current directory.
+           - { "action": "createFolder", "folderName": "New Documents" }
+        3. renameFile: Renames a file. oldName must be exact.
+           - { "action": "renameFile", "oldName": "report-v1.txt", "newName": "report-v2.txt" }
+        4. moveFiles: Moves specified files to a destination folder.
+           - { "action": "moveFiles", "fileNames": ["file1.txt"], "destinationFolderName": "Archive" }
+        5. deleteFiles: Moves specified files to the trash.
+           - { "action": "deleteFiles", "fileNames": ["temp.txt"] }
 
-        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
-        res.json({ answer: response.text });
+        Context:
+        - The current folder ID is: ${currentFolderId === null ? 'root' : currentFolderId}.
+        - The currently selected file IDs are: [${[...selectedIds].join(', ')}].
+        - List of all files:
+          ${files.map((f: any) => `- ID: ${f.id}, Name: "${f.name}", Type: ${f.type}, ParentID: ${f.parentId}`).join('\n')}
+
+        User Prompt: "${prompt}"
+
+        Based on the user's prompt and the provided context, generate the JSON response. Be smart and chain actions together. For example, to move files, you might need to create the destination folder first if it doesn't exist.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: systemInstruction,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        explanation: { type: Type.STRING },
+                        actions: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    action: { type: Type.STRING },
+                                    fileNames: { type: Type.ARRAY, items: { type: Type.STRING } },
+                                    folderName: { type: Type.STRING },
+                                    oldName: { type: Type.STRING },
+                                    newName: { type: Type.STRING },
+                                    destinationFolderName: { type: Type.STRING }
+                                },
+                                required: ['action']
+                            }
+                        }
+                    },
+                    required: ['explanation', 'actions']
+                }
+            }
+        });
+
+        res.json(JSON.parse(response.text));
     } catch (error) {
-        console.error('Error in /api/chat-with-document:', error);
-        res.status(500).json({ error: 'Failed to get answer from AI.' });
+        console.error('Error in /api/ai-assistant:', error);
+        res.status(500).json({ error: 'Failed to process assistant command.' });
     }
 });
-
-// Serve static files from the build directory
-app.use(express.static(path.join(__dirname, 'dist')));
-
-// The "catchall" handler: for any request that doesn't match one above, send back React's index.html file.
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-});
-
 
 app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
+    console.log(`Server is running on http://localhost:${port}`);
 });

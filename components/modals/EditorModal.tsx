@@ -1,178 +1,201 @@
-
-import React, { useState, useEffect, useRef } from 'react';
-import { FileItem, ChatMessage } from '../../types';
-import { isImage, isPdf, isEditable, formatBytes } from '../../utils/fileUtils';
-import { ICONS } from '../../constants';
-import { chatWithDocument } from '../../services/geminiService';
+import React, { useState, useRef, useEffect } from 'react';
+import { FileItem, ChatMessage, ModalState } from '../../types.ts';
+import { chatWithDocument } from '../../services/geminiService.ts';
 
 interface EditorModalProps {
     file: FileItem;
-    onClose: () => void;
+    setModalState: (state: ModalState) => void;
     setFiles: React.Dispatch<React.SetStateAction<FileItem[]>>;
 }
 
-const EditorModal: React.FC<EditorModalProps> = ({ file, onClose, setFiles }) => {
-    const initialContent = (file.versions && file.versions.length > 0) ? file.versions[0].content : '';
-    const [content, setContent] = useState(initialContent);
-    const [isChatVisible, setIsChatVisible] = useState(false);
+const MAX_EDITABLE_CONTENT_LENGTH = 1 * 1024 * 1024; // 1MB
+
+const EditorModal: React.FC<EditorModalProps> = ({ file, setModalState, setFiles }) => {
+    const latestVersion = file.versions?.[0];
+    const [content, setContent] = useState(latestVersion?.content || '');
+    const [isDirty, setIsDirty] = useState(false);
+    const isTooLargeForEditing = (latestVersion?.content?.length || 0) > MAX_EDITABLE_CONTENT_LENGTH;
+
+    // AI Chat state
     const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
-    const [userQuestion, setUserQuestion] = useState('');
-    const [isChatLoading, setIsChatLoading] = useState(false);
-    const [documentTextContent, setDocumentTextContent] = useState<string | null>(null);
-    const [isPdfLoading, setIsPdfLoading] = useState(true);
-    const [isHistoryVisible, setIsHistoryVisible] = useState(false);
-    const [previewContent, setPreviewContent] = useState<string | null>(null);
+    const [question, setQuestion] = useState('');
+    const [isAnswering, setIsAnswering] = useState(false);
+    const chatContainerRef = useRef<HTMLDivElement>(null);
+    const isMounted = useRef(true);
 
-    const pdfCanvasRef = useRef<HTMLCanvasElement>(null);
-    const chatBodyRef = useRef<HTMLDivElement>(null);
-    const isDirty = content !== initialContent;
-    const isPreviewingVersion = previewContent !== null;
-
-    // Extract text from file for AI Chat from latest version
     useEffect(() => {
-        if (isEditable(file.name)) {
-            setDocumentTextContent(initialContent);
-        } else if (isPdf(file.name) && file.url) {
-            const extractText = async () => {
-                try {
-                    const pdf = await (window as any).pdfjsLib.getDocument(file.url).promise;
-                    let fullText = '';
-                    for (let i = 1; i <= pdf.numPages; i++) {
-                        const page = await pdf.getPage(i);
-                        const textContent = await page.getTextContent();
-                        fullText += textContent.items.map((item: any) => item.str).join(' ');
-                        fullText += '\n';
-                    }
-                    setDocumentTextContent(fullText);
-                } catch (error) {
-                    console.error('Error extracting PDF text:', error);
-                    setDocumentTextContent('Could not extract text from this PDF for chat.');
-                }
-            };
-            extractText();
-        } else {
-            setDocumentTextContent(null);
-        }
-    }, [file, initialContent]);
-    
-    // Render PDF to canvas
-    useEffect(() => {
-        if (isPdf(file.name) && file.url && pdfCanvasRef.current) {
-            let isCancelled = false;
-            const renderPdf = async () => {
-                setIsPdfLoading(true);
-                try {
-                    const pdf = await (window as any).pdfjsLib.getDocument(file.url).promise;
-                    if (isCancelled) return;
-                    const page = await pdf.getPage(1);
-                    if (isCancelled) return;
-                    const viewport = page.getViewport({ scale: 1.5 });
-                    const canvas = pdfCanvasRef.current;
-                    if (canvas) {
-                        canvas.height = viewport.height;
-                        canvas.width = viewport.width;
-                        const context = canvas.getContext('2d');
-                        if (context) await page.render({ canvasContext: context, viewport }).promise;
-                    }
-                } catch (error) {
-                    console.error("Failed to render PDF", error);
-                } finally {
-                    if (!isCancelled) setIsPdfLoading(false);
-                }
-            };
-            renderPdf();
-            return () => { isCancelled = true; };
-        }
-    }, [file]);
+        isMounted.current = true;
+        return () => {
+            isMounted.current = false;
+        };
+    }, []);
 
-    useEffect(() => { chatBodyRef.current?.scrollTo(0, chatBodyRef.current.scrollHeight); }, [chatHistory]);
+    useEffect(() => {
+        if (chatContainerRef.current) {
+            chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+        }
+    }, [chatHistory]);
 
     const handleSave = () => {
-        if (!isEditable(file.name) || !isDirty) return;
+        if (!isDirty || isTooLargeForEditing) return;
         const newVersion = { timestamp: Date.now(), content };
-        const newVersions = [newVersion, ...(file.versions || [])];
-        setFiles(p => p.map(f => f.id === file.id ? { ...f, versions: newVersions, lastModified: newVersion.timestamp } : f));
-        onClose();
+        const newVersions = [newVersion, ...(file.versions || [])].slice(0, 10); // Keep last 10 versions
+        setFiles(prev => prev.map(f => f.id === file.id ? { ...f, versions: newVersions, lastModified: Date.now(), size: content.length } : f));
+        setIsDirty(false);
+    };
+
+    const handleCloseAttempt = () => {
+        if (isDirty && !isTooLargeForEditing) {
+            setModalState({
+                type: 'confirmAction',
+                title: 'Unsaved Changes',
+                message: 'You have unsaved changes. Are you sure you want to close without saving?',
+                confirmText: 'Close Without Saving',
+                confirmClass: 'bg-danger hover:bg-red-700',
+                onConfirm: () => setModalState(null),
+            });
+        } else {
+            setModalState(null);
+        }
+    };
+
+    const handleSaveAndClose = () => {
+        if (!isTooLargeForEditing) {
+            handleSave();
+        }
+        setModalState(null);
     };
     
-    const handleRestoreVersion = (versionContent: string) => {
-        const newVersion = { timestamp: Date.now(), content: versionContent };
-        const newVersions = [newVersion, ...(file.versions || [])];
-        setFiles(p => p.map(f => f.id === file.id ? { ...f, versions: newVersions, lastModified: newVersion.timestamp } : f));
-        setContent(versionContent);
-        setPreviewContent(null);
+    const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setContent(e.target.value);
+        setIsDirty(true);
     };
 
-    const handleChatSubmit = async (e: React.FormEvent) => {
+    const handleAskQuestion = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!userQuestion.trim() || isChatLoading || !documentTextContent) return;
-        const newUserMessage: ChatMessage = { role: 'user', content: userQuestion.trim() };
-        setChatHistory(prev => [...prev, newUserMessage]);
-        setIsChatLoading(true);
-        setUserQuestion('');
+        if (!question.trim() || isAnswering || isTooLargeForEditing) return;
+
+        const userMessage: ChatMessage = { role: 'user', content: question };
+        setChatHistory(prev => [...prev, userMessage]);
+        const currentQuestion = question;
+        setQuestion('');
+        setIsAnswering(true);
+
         try {
-            const answer = await chatWithDocument(documentTextContent, userQuestion.trim(), chatHistory);
-            setChatHistory(prev => [...prev, { role: 'model', content: answer }]);
+            const answer = await chatWithDocument(content, currentQuestion, chatHistory.slice(0, -1)); // Exclude current question from history
+            if (isMounted.current) {
+                const modelMessage: ChatMessage = { role: 'model', content: answer };
+                setChatHistory(prev => [...prev, modelMessage]);
+            }
         } catch (error) {
-            const errMsg = error instanceof Error ? error.message : 'An unexpected error occurred.';
-            setChatHistory(prev => [...prev, { role: 'model', content: `Sorry, error: ${errMsg}` }]);
+            if (isMounted.current) {
+                const errorMessage: ChatMessage = { role: 'model', content: "Sorry, I couldn't get an answer. Please try again." };
+                setChatHistory(prev => [...prev, errorMessage]);
+            }
         } finally {
-            setIsChatLoading(false);
+            if (isMounted.current) {
+                setIsAnswering(false);
+            }
         }
     };
 
-    const canChat = documentTextContent !== null;
-
-    const renderContent = () => {
-        if (isImage(file.name) && file.url) return <img src={file.url} alt={file.name} className="max-w-full max-h-full object-contain" />;
-        if (isPdf(file.name)) {
-            return (
-                <div className="relative">{isPdfLoading && <div className="absolute inset-0 flex items-center justify-center bg-gray-100"><div className="text-text-secondary">Loading PDF...</div></div>}
-                    <canvas ref={pdfCanvasRef} className={isPdfLoading ? 'opacity-0' : 'opacity-100'} />
-                </div>
-            );
-        }
-        if (isEditable(file.name)) return <textarea value={isPreviewingVersion ? previewContent : content} onChange={e => setContent(e.target.value)} readOnly={isPreviewingVersion} className="w-full h-full font-mono text-sm p-4 border rounded-lg focus:ring-primary focus:border-primary resize-none disabled:bg-gray-50" />;
-        return <div className="flex flex-col justify-center items-center h-full"><div className="w-24 h-24 text-gray-400">{ICONS.file}</div><p className="mt-4 text-text-secondary">Preview not available.</p><p className="text-sm text-gray-400">{formatBytes(file.size)}</p></div>;
-    };
 
     return (
-        <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center" onClick={onClose}>
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl h-[90vh] p-4 flex flex-col modal-content" onClick={e => e.stopPropagation()}>
-                <header className="flex justify-between items-center border-b pb-3 mb-4 flex-shrink-0">
-                    <h3 className="text-lg font-semibold truncate pr-4">{file.name}{isDirty && !isPreviewingVersion && '*'}</h3>
-                    <div className="flex items-center gap-4">
-                        {isEditable(file.name) && <button onClick={() => setIsHistoryVisible(!isHistoryVisible)} className="px-4 py-2 rounded-lg font-semibold border hover:bg-gray-100 flex items-center gap-2">Version History</button>}
-                        {canChat && <button onClick={() => setIsChatVisible(!isChatVisible)} className="px-4 py-2 rounded-lg font-semibold border hover:bg-gray-100 flex items-center gap-2">{isChatVisible ? 'Hide Chat' : 'AI Chat'}</button>}
-                        {isEditable(file.name) && <button onClick={handleSave} disabled={!isDirty || isPreviewingVersion} className={`px-4 py-2 rounded-lg text-white font-semibold transition-colors ${isDirty && !isPreviewingVersion ? 'bg-blue-600 hover:bg-blue-700' : 'bg-primary/50 cursor-not-allowed'}`}>Save & Close</button>}
-                        <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-200"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+         <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4 md:p-8" onClick={handleCloseAttempt}>
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl h-full flex flex-col md:flex-row" onClick={e => e.stopPropagation()}>
+                {/* Editor Pane */}
+                <div className="flex-1 flex flex-col p-6">
+                    <h3 className="text-xl font-semibold mb-4 border-b pb-3 truncate">
+                        Editing: <span className="italic">{file.name}</span>
+                        {isDirty && !isTooLargeForEditing && <span className="text-sm font-normal text-yellow-600 ml-2">(unsaved changes)</span>}
+                    </h3>
+                    {isTooLargeForEditing ? (
+                        <div className="w-full h-full flex-1 p-4 border rounded-md flex items-center justify-center text-center bg-gray-50">
+                            <div>
+                                <h4 className="font-semibold text-lg text-text-primary">File is Too Large</h4>
+                                <p className="text-text-secondary mt-2">
+                                    This file is larger than 1MB and cannot be edited or viewed in the browser.
+                                    <br />
+                                    Please download it to make changes.
+                                </p>
+                            </div>
+                        </div>
+                    ) : (
+                        <textarea
+                            value={content}
+                            onChange={handleContentChange}
+                            className="w-full h-full flex-1 p-4 border rounded-md font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                            placeholder="Start typing..."
+                        />
+                    )}
+                     <div className="flex justify-end gap-3 mt-4 pt-4 border-t">
+                        <button className="px-4 py-2 rounded-lg text-text-secondary hover:bg-gray-100" onClick={handleCloseAttempt}>
+                             {isDirty && !isTooLargeForEditing ? 'Close Without Saving' : 'Close'}
+                        </button>
+                        {!isTooLargeForEditing && (
+                            <>
+                                <button 
+                                    className="px-4 py-2 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50" 
+                                    onClick={handleSave}
+                                    disabled={!isDirty}
+                                >
+                                    Save
+                                </button>
+                                 <button className="px-4 py-2 rounded-lg bg-primary text-white font-semibold hover:bg-blue-700" onClick={handleSaveAndClose}>
+                                    Save & Close
+                                </button>
+                            </>
+                        )}
                     </div>
-                </header>
-                <main className="flex-grow overflow-hidden flex gap-4">
-                    <div className="flex-grow h-full overflow-auto bg-gray-100 rounded-lg p-2 flex justify-center items-start relative">{isPreviewingVersion && <div className="absolute top-2 left-2 z-10 bg-yellow-100 text-yellow-800 text-xs font-semibold px-3 py-1 rounded-full">Previewing an older version. <button className="font-bold underline ml-2" onClick={() => setPreviewContent(null)}>Exit Preview</button></div>}{renderContent()}</div>
-                    {isHistoryVisible && (
-                        <div className="w-80 flex-shrink-0 flex flex-col border rounded-lg">
-                            <h4 className="p-4 border-b font-semibold text-center">Version History</h4>
-                            <ul className="flex-grow p-2 space-y-1 overflow-y-auto">
-                                {file.versions?.map((v, i) => (
-                                    <li key={v.timestamp} className="p-2 rounded hover:bg-gray-100">
-                                        <div className="font-medium text-sm text-text-primary">{new Date(v.timestamp).toLocaleString()} {i === 0 && <span className="text-xs font-bold text-green-600 ml-2">Current</span>}</div>
-                                        <div className="text-xs text-text-secondary mt-2 flex gap-2">
-                                            <button onClick={() => setPreviewContent(v.content)} className="font-semibold text-blue-600 hover:underline">Preview</button>
-                                            <button onClick={() => handleRestoreVersion(v.content)} className="font-semibold text-blue-600 hover:underline">Restore</button>
+                </div>
+
+                {/* AI Chat Pane */}
+                <div className="w-full md:w-1/3 bg-gray-50 border-l flex flex-col">
+                    <h4 className="p-4 font-semibold text-lg border-b text-primary flex-shrink-0">Ask about this document</h4>
+                     {isTooLargeForEditing ? (
+                        <div className="flex-1 p-4 flex items-center justify-center text-center">
+                            <p className="text-text-secondary">AI analysis is unavailable for files larger than 1MB.</p>
+                        </div>
+                    ) : (
+                        <>
+                            <div ref={chatContainerRef} className="flex-1 p-4 overflow-y-auto space-y-4">
+                                {chatHistory.map((msg, index) => (
+                                    <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`max-w-xs md:max-w-sm lg:max-w-md p-3 rounded-lg ${msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-text-primary'}`}>
+                                            <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                                         </div>
-                                    </li>
+                                    </div>
                                 ))}
-                            </ul>
-                        </div>
+                                {isAnswering && (
+                                     <div className="flex justify-start">
+                                        <div className="max-w-xs p-3 rounded-lg bg-gray-200 text-text-primary">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse"></div>
+                                                <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse [animation-delay:0.1s]"></div>
+                                                <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse [animation-delay:0.2s]"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <form onSubmit={handleAskQuestion} className="p-4 border-t bg-white flex-shrink-0">
+                                <div className="relative">
+                                     <input
+                                        type="text"
+                                        value={question}
+                                        onChange={e => setQuestion(e.target.value)}
+                                        placeholder="e.g., summarize the main points"
+                                        className="w-full pr-12 py-2 pl-4 border rounded-full focus:outline-none focus:ring-2 focus:ring-primary"
+                                        disabled={isAnswering}
+                                    />
+                                    <button type="submit" className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-primary text-white hover:bg-blue-700 disabled:opacity-50" disabled={!question.trim() || isAnswering}>
+                                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>
+                                    </button>
+                                </div>
+                            </form>
+                        </>
                     )}
-                    {isChatVisible && !isHistoryVisible && (
-                        <div className="w-96 flex-shrink-0 flex flex-col border rounded-lg">
-                            <div ref={chatBodyRef} className="flex-grow p-4 space-y-4 overflow-y-auto">{chatHistory.length === 0 && <div className="text-center text-sm text-text-secondary pt-10">Ask a question about the document to start the chat.</div>}{chatHistory.map((msg, i) => (<div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-xs lg:max-w-sm px-4 py-2 rounded-2xl ${msg.role === 'user' ? 'bg-primary text-white' : 'bg-gray-200 text-text-primary'}`}><p className="whitespace-pre-wrap">{msg.content}</p></div></div>))}{isChatLoading && <div className="flex justify-start"><div className="px-4 py-2 rounded-2xl bg-gray-200 text-text-primary">Thinking...</div></div>}</div>
-                            <form onSubmit={handleChatSubmit} className="p-4 border-t flex gap-2"><input type="text" value={userQuestion} onChange={e => setUserQuestion(e.target.value)} placeholder="Ask a question..." className="flex-grow px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" /><button type="submit" disabled={isChatLoading} className="px-4 py-2 rounded-lg bg-primary text-white font-semibold hover:bg-blue-700 disabled:opacity-50">Send</button></form>
-                        </div>
-                    )}
-                </main>
+                </div>
             </div>
         </div>
     );
